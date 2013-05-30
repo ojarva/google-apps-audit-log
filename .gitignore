@@ -1,0 +1,5 @@
+syntax: glob
+a_credentials_file
+client_secrets.json
+timestamps-*.json
+settings.json
