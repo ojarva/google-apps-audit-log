@@ -5,10 +5,19 @@ import httplib2
 import datetime
 import json
 import hashlib
+import logging
+import logging.handlers
+
 from urllib import urlencode
 
 settings = json.load(open("settings.json"))
 storage = Storage('a_credentials_file')
+
+logger = logging.getLogger('google-audit-log')
+logger.setLevel("INFO")
+handler = logging.handlers.SysLogHandler(address = '/dev/log')
+logger.addHandler(handler)
+
 
 credentials = storage.get()
 if not credentials:
@@ -17,7 +26,7 @@ if not credentials:
                                redirect_uri='urn:ietf:wg:oauth:2.0:oob')
     auth_uri = flow.step1_get_authorize_url()
     print auth_uri
-    code = raw_input()
+    code = raw_input("Auth token: ")
     credentials = flow.step2_exchange(code)
     storage.put(credentials)
 
@@ -28,6 +37,7 @@ http = credentials.authorize(http)
 
 def get_data_page(http, system, start, end, page_token = None):
     url = "https://www.googleapis.com/admin/reports/v1/activity/users/all/applications/%s?startTime=%s&endTime=%s&maxResults=1000" % (system, start, end)
+    logger.debug("Opening page %s", url)
     if page_token:
         url = url + "&pageToken=%s" % page_token
     resp, content = http.request(url)
@@ -47,11 +57,13 @@ def get_data(http, system, start, end):
             return data_all
         data_all["items"].extend(data.get("items"))
         page_token = data.get("nextPageToken")
+    logger.debug("Successfully downloaded %s entries", len(data_all))
     return data_all
 
 
 
 def get_docs_data(start, end):
+    logger.info("Starting docs download from %s to %s", start, end)
     data = get_data(http, "docs", start, end) #"2013-05-29T00:00:00.000Z", "2013-05-30T23:59:59.000Z")
     processed_data = []
     for item in data["items"]:
@@ -71,9 +83,11 @@ def get_docs_data(start, end):
             processed_data = []
     if len(processed_data) > 0:
         post_to_login("gdocs", processed_data)
-    save_timestamp("gdocs", {"largest": (datetime.datetime.now() - datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%S.000Z")})
+    logger.info("Finished docs processing")
+    save_timestamp("gdocs", {"largest": (datetime.datetime.utcnow() - datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%S.000Z")})
 
 def get_admin_data(start, end):
+    logger.info("Starting admin download from %s to %s", start, end)
     data = get_data(http, "admin", start, end) # "2013-05-29T00:00:00.000Z", "2013-05-30T23:59:59.000Z")
     processed_data = []
     for item in data.get("items", []):
@@ -100,7 +114,8 @@ def get_admin_data(start, end):
 
     if len(processed_data) > 0:
         post_to_login("gadmin", processed_data)
-    save_timestamp("gadmin", {"largest": (datetime.datetime.now() - datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%S.000Z")})
+    logger.info("Finished admin processing")
+    save_timestamp("gadmin", {"largest": (datetime.datetime.utcnow() - datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%S.000Z")})
 
 
 def load_timestamp(system):
@@ -126,7 +141,7 @@ def post_to_login(system, data):
 
 
 def main():
-    today = datetime.date.today()
+    today = datetime.datetime.utcnow()
     get_docs_data(load_timestamp("gdocs")["largest"], today.strftime("%Y-%m-%dT23:59:59.999Z"))
     get_admin_data(load_timestamp("gadmin")["largest"], today.strftime("%Y-%m-%dT23:59:59.999Z"))
 
